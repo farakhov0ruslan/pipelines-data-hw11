@@ -1,0 +1,24 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: postgresql
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: https://gitlab.internal.example.com/data-platform-infra.git
+      targetRevision: HEAD
+      ref: values
+    - repoURL: https://charts.bitnami.com/bitnami
+      chart: postgresql
+      targetRevision: "15.5.0"
+      helm:
+        valueFiles:
+          - $values/helm-releases/postgresql/values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: data-platform
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true

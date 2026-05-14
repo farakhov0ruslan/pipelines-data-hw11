@@ -1,0 +1,22 @@
+auth:
+  rootUser: minio-admin
+  rootPassword: ""          # задаётся через Kubernetes Secret, не здесь
+
+persistence:
+  enabled: true
+  size: 20Gi
+  storageClass: standard
+
+defaultBuckets: "argo-artifacts,data-bucket"
+
+resources:
+  requests:
+    cpu: "250m"
+    memory: "512Mi"
+  limits:
+    cpu: "1"
+    memory: "1Gi"
+
+service:
+  type: ClusterIP
+  port: 9000

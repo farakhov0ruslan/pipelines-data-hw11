@@ -1,0 +1,18 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: dashboard-ui-prod
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://gitlab.internal.example.com/data-platform-infra.git
+    targetRevision: HEAD
+    path: services/dashboard-ui/overlays/prod
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: data-platform
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

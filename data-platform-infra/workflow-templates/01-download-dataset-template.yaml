@@ -1,0 +1,48 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: download-dataset-template
+  namespace: argo
+spec:
+  templates:
+    - name: download-dataset
+      inputs:
+        parameters:
+          - name: s3-bucket
+          - name: s3-key
+          - name: output-filename
+            value: "dataset.parquet"
+      outputs:
+        artifacts:
+          - name: dataset
+            path: /data/{{inputs.parameters.output-filename}}
+            s3:
+              bucket: "{{inputs.parameters.s3-bucket}}"
+              key: "{{inputs.parameters.s3-key}}"
+      container:
+        image: amazon/aws-cli:2.15.0
+        command: [sh, -c]
+        args:
+          - |
+            mkdir -p /data
+            aws s3 cp s3://{{inputs.parameters.s3-bucket}}/{{inputs.parameters.s3-key}} \
+              /data/{{inputs.parameters.output-filename}} \
+              --endpoint-url $S3_ENDPOINT
+            echo "Downloaded: /data/{{inputs.parameters.output-filename}}"
+        env:
+          - name: S3_ENDPOINT
+            value: "http://minio.minio.svc.cluster.local:9000"
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: argo-minio-secret
+                key: accessKey
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: argo-minio-secret
+                key: secretKey
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"

@@ -1,0 +1,96 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: spark-job-template
+  namespace: argo
+spec:
+  templates:
+    - name: run-spark
+      inputs:
+        parameters:
+          - name: image             # полный путь образа в Harbor
+          - name: input-path        # s3a://bucket/path/to/input
+          - name: output-path       # s3a://bucket/path/to/output
+          - name: main-module
+            value: "main"
+      outputs:
+        parameters:
+          - name: status
+            valueFrom:
+              path: /tmp/spark-status.txt
+        artifacts:
+          - name: spark-output
+            path: /tmp/spark-result.json
+      script:
+        image: bitnami/kubectl:1.29
+        command: [bash]
+        source: |
+          set -euo pipefail
+          SPARK_APP="{{workflow.name}}-spark"
+
+          # Создаём SparkApplication CRD через kubectl
+          cat <<MANIFEST | kubectl apply -f -
+          apiVersion: sparkoperator.k8s.io/v1beta2
+          kind: SparkApplication
+          metadata:
+            name: ${SPARK_APP}
+            namespace: argo
+          spec:
+            type: Python
+            pythonVersion: "3"
+            mode: cluster
+            image: "{{inputs.parameters.image}}"
+            imagePullPolicy: IfNotPresent
+            mainApplicationFile: "local:///app/{{inputs.parameters.main-module}}.py"
+            sparkVersion: "3.5.1"
+            restartPolicy:
+              type: Never
+            driver:
+              cores: 1
+              coreLimit: "1200m"
+              memory: "512m"
+              serviceAccount: spark
+              env:
+                - name: INPUT_PATH
+                  value: "{{inputs.parameters.input-path}}"
+                - name: OUTPUT_PATH
+                  value: "{{inputs.parameters.output-path}}"
+                - name: S3_ENDPOINT
+                  value: http://minio.minio.svc.cluster.local:9000
+              envFrom:
+                - secretRef:
+                    name: minio-spark-credentials
+            executor:
+              cores: 1
+              instances: 2
+              memory: "1g"
+          MANIFEST
+
+          # Ждём завершения SparkApplication (Spark Operator меняет .status.applicationState.state)
+          TIMEOUT=600
+          ELAPSED=0
+          while [ $ELAPSED -lt $TIMEOUT ]; do
+            STATE=$(kubectl get sparkapplication "$SPARK_APP" -n argo \
+              -o jsonpath='{.status.applicationState.state}' 2>/dev/null || echo "UNKNOWN")
+
+            if [ "$STATE" = "COMPLETED" ]; then
+              echo "OK" > /tmp/spark-status.txt
+              echo '{"status":"OK","app":"'"$SPARK_APP"'"}' > /tmp/spark-result.json
+              exit 0
+            elif [ "$STATE" = "FAILED" ] || [ "$STATE" = "SUBMISSION_FAILED" ]; then
+              echo "FAILED" > /tmp/spark-status.txt
+              echo '{"status":"FAILED","app":"'"$SPARK_APP"'"}' > /tmp/spark-result.json
+              exit 1
+            fi
+
+            sleep 10
+            ELAPSED=$((ELAPSED + 10))
+          done
+
+          echo "TIMEOUT" > /tmp/spark-status.txt
+          echo '{"status":"TIMEOUT","app":"'"$SPARK_APP"'"}' > /tmp/spark-result.json
+          exit 1
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"

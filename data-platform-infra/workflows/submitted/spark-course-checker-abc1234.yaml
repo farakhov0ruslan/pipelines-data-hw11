@@ -1,0 +1,89 @@
+# Сгенерирован GitLab CI | pipeline: spark-course-checker | commit: abc1234
+# Команда: ci/scripts/generate-spark-workflow.sh
+# Не редактировать вручную — следующий CI-прогон перезапишет этот файл.
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  name: spark-course-checker-abc1234
+  namespace: argo
+spec:
+  entrypoint: data-quality-dag
+  ttlStrategy:
+    secondsAfterCompletion: 86400
+    secondsAfterFailure: 604800
+  arguments:
+    parameters:
+      - name: image-tag
+        value: "abc1234"
+      - name: spark-image
+        value: "harbor.internal.example.com/data-platform/spark-course-checker:abc1234"
+
+  templates:
+    - name: data-quality-dag
+      dag:
+        tasks:
+
+          - name: download-dataset
+            templateRef:
+              name: download-dataset-template
+              template: download-dataset
+            arguments:
+              parameters:
+                - name: s3-bucket
+                  value: data-bucket
+                - name: s3-key
+                  value: input/dataset.parquet
+                - name: output-filename
+                  value: dataset.parquet
+
+          - name: validate-schema
+            depends: download-dataset
+            templateRef:
+              name: validate-schema-template
+              template: validate-schema
+            arguments:
+              parameters:
+                - name: required-columns
+                  value: "id,student_name,submission_date,score"
+                - name: file-format
+                  value: parquet
+              artifacts:
+                - name: input-dataset
+                  from: "{{tasks.download-dataset.outputs.artifacts.dataset}}"
+
+          - name: run-spark-job
+            depends: validate-schema
+            templateRef:
+              name: spark-job-template
+              template: run-spark
+            arguments:
+              parameters:
+                - name: image
+                  value: "harbor.internal.example.com/data-platform/spark-course-checker:abc1234"
+                - name: input-path
+                  value: "s3a://data-bucket/input/dataset.parquet"
+                - name: output-path
+                  value: "s3a://data-bucket/output/abc1234/result"
+                - name: main-module
+                  value: main
+
+          - name: generate-report
+            depends: "validate-schema && run-spark-job"
+            templateRef:
+              name: quality-report-template
+              template: generate-quality-report
+            arguments:
+              parameters:
+                - name: pipeline-name
+                  value: spark-course-checker
+                - name: image-tag
+                  value: "abc1234"
+                - name: spark-status
+                  value: "{{tasks.run-spark-job.outputs.parameters.status}}"
+                - name: validation-status
+                  value: "{{tasks.validate-schema.outputs.parameters.validation-status}}"
+              artifacts:
+                - name: validation-report
+                  from: "{{tasks.validate-schema.outputs.artifacts.validation-report}}"
+                - name: spark-result
+                  from: "{{tasks.run-spark-job.outputs.artifacts.spark-output}}"

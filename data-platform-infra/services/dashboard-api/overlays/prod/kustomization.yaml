@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+patches:
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "500m"
+            memory: "1Gi"
+    target:
+      kind: Deployment
+      name: dashboard-api
+images:
+  - name: dashboard-api
+    newName: harbor.internal.example.com/data-platform/dashboard-api
+    newTag: "abc1234"   # обновляется GitLab CI через yq

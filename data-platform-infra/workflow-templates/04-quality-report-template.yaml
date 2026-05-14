@@ -1,0 +1,71 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: quality-report-template
+  namespace: argo
+spec:
+  templates:
+    - name: generate-quality-report
+      inputs:
+        parameters:
+          - name: pipeline-name
+          - name: image-tag
+          - name: spark-status        # OK | FAILED
+          - name: validation-status   # OK | FAILED
+        artifacts:
+          - name: validation-report
+            path: /tmp/validation-report.txt
+          - name: spark-result
+            path: /tmp/spark-result.json
+      outputs:
+        artifacts:
+          - name: quality-report
+            path: /tmp/quality-report.md
+            archive:
+              none: {}
+      container:
+        image: python:3.11-slim
+        command: [python3, -c]
+        args:
+          - |
+            import pathlib, datetime, json
+
+            validation = pathlib.Path("/tmp/validation-report.txt").read_text()
+            spark_raw   = pathlib.Path("/tmp/spark-result.json").read_text()
+            spark_result = json.loads(spark_raw)
+
+            overall = (
+                "✅ PASSED"
+                if "{{inputs.parameters.spark-status}}" == "OK"
+                and "{{inputs.parameters.validation-status}}" == "OK"
+                else "❌ FAILED"
+            )
+
+            report = f"""# Data Quality Report
+
+            **Pipeline:** {{inputs.parameters.pipeline-name}}
+            **Image tag:** {{inputs.parameters.image-tag}}
+            **Date:** {datetime.datetime.utcnow().isoformat()}
+
+            ## Overall: {overall}
+
+            | Stage | Status |
+            |---|---|
+            | Schema Validation | {{inputs.parameters.validation-status}} |
+            | Spark Job | {{inputs.parameters.spark-status}} |
+
+            ## Validation Details
+            {validation}
+
+            ## Spark Result
+            ```json
+            {spark_raw}
+            ```
+            """
+
+            pathlib.Path("/tmp/quality-report.md").write_text(report)
+            print(report)
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "64Mi"

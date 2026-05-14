@@ -1,0 +1,88 @@
+# Шаблон для генерации Workflow CI-пайплайном.
+# GitLab CI подставляет metadata.name, image-tag и spark-image через yq.
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  name: spark-course-checker-PLACEHOLDER   # заменяется yq: spark-course-checker-{SHA}
+  namespace: argo
+spec:
+  entrypoint: data-quality-dag
+  ttlStrategy:
+    secondsAfterCompletion: 86400    # объект Workflow удаляется через сутки после успеха
+    secondsAfterFailure: 604800      # упавшие пайплайны хранятся неделю для разбора
+  arguments:
+    parameters:
+      - name: image-tag
+        value: "PLACEHOLDER"               # заменяется yq: $CI_COMMIT_SHORT_SHA
+      - name: spark-image
+        value: "PLACEHOLDER"               # заменяется yq: harbor.../spark-course-checker:{SHA}
+
+  templates:
+    - name: data-quality-dag
+      dag:
+        tasks:
+
+          - name: download-dataset
+            templateRef:
+              name: download-dataset-template
+              template: download-dataset
+            arguments:
+              parameters:
+                - name: s3-bucket
+                  value: data-bucket
+                - name: s3-key
+                  value: input/dataset.parquet
+                - name: output-filename
+                  value: dataset.parquet
+
+          - name: validate-schema
+            depends: download-dataset
+            templateRef:
+              name: validate-schema-template
+              template: validate-schema
+            arguments:
+              parameters:
+                - name: required-columns
+                  value: "id,student_name,submission_date,score"
+                - name: file-format
+                  value: parquet
+              artifacts:
+                - name: input-dataset
+                  from: "{{tasks.download-dataset.outputs.artifacts.dataset}}"
+
+          - name: run-spark-job
+            depends: validate-schema
+            templateRef:
+              name: spark-job-template
+              template: run-spark
+            arguments:
+              parameters:
+                - name: image
+                  value: "{{workflow.parameters.spark-image}}"
+                - name: input-path
+                  value: "s3a://data-bucket/input/dataset.parquet"
+                - name: output-path
+                  value: "s3a://data-bucket/output/{{workflow.parameters.image-tag}}/result"
+                - name: main-module
+                  value: main
+
+          - name: generate-report
+            depends: "validate-schema && run-spark-job"
+            templateRef:
+              name: quality-report-template
+              template: generate-quality-report
+            arguments:
+              parameters:
+                - name: pipeline-name
+                  value: spark-course-checker
+                - name: image-tag
+                  value: "{{workflow.parameters.image-tag}}"
+                - name: spark-status
+                  value: "{{tasks.run-spark-job.outputs.parameters.status}}"
+                - name: validation-status
+                  value: "{{tasks.validate-schema.outputs.parameters.validation-status}}"
+              artifacts:
+                - name: validation-report
+                  from: "{{tasks.validate-schema.outputs.artifacts.validation-report}}"
+                - name: spark-result
+                  from: "{{tasks.run-spark-job.outputs.artifacts.spark-output}}"

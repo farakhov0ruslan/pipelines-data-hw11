@@ -1,0 +1,59 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: validate-schema-template
+  namespace: argo
+spec:
+  templates:
+    - name: validate-schema
+      inputs:
+        parameters:
+          - name: required-columns      # через запятую: "id,name,timestamp"
+          - name: file-format
+            value: "parquet"
+        artifacts:
+          - name: input-dataset
+            path: /data/input
+      outputs:
+        parameters:
+          - name: validation-status     # OK | FAILED
+            valueFrom:
+              path: /tmp/validation-status.txt
+        artifacts:
+          - name: validation-report
+            path: /tmp/validation-report.txt
+      container:
+        image: python:3.11-slim
+        command: [sh, -c]
+        args:
+          - |
+            pip install pyarrow pandas --quiet
+
+            python3 - <<'EOF'
+            import json, sys, pathlib, pandas as pd
+
+            required = "{{inputs.parameters.required-columns}}".split(",")
+            fmt = "{{inputs.parameters.file-format}}"
+
+            src = pathlib.Path("/data/input")
+            files = list(src.glob(f"*.{fmt}"))
+            if not files:
+                print("FAILED: no files found", file=sys.stderr)
+                pathlib.Path("/tmp/validation-status.txt").write_text("FAILED")
+                sys.exit(1)
+
+            df = pd.read_parquet(files[0]) if fmt == "parquet" else pd.read_csv(files[0])
+            missing = [c for c in required if c not in df.columns]
+
+            status = "OK" if not missing else "FAILED"
+            report = f"rows={len(df)}, columns={list(df.columns)}, missing={missing}"
+
+            pathlib.Path("/tmp/validation-status.txt").write_text(status)
+            pathlib.Path("/tmp/validation-report.txt").write_text(report)
+            print(f"{status}: {report}")
+            sys.exit(0 if status == "OK" else 1)
+            EOF
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"

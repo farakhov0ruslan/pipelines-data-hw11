@@ -1,0 +1,129 @@
+stages:
+  - lint
+  - build
+  - publish
+  - update-infra
+
+variables:
+  HARBOR_REGISTRY: harbor.internal.example.com
+  IMAGE_TAG: $CI_COMMIT_SHORT_SHA
+
+# ── Spark: course-checker ────────────────────────────────────────────────────
+
+build-spark-course-checker:
+  stage: build
+  image: docker:24
+  services:
+    - docker:24-dind
+  variables:
+    SPARK_IMAGE: data-platform/spark-course-checker
+  script:
+    - docker build -t $HARBOR_REGISTRY/$SPARK_IMAGE:$IMAGE_TAG spark-jobs/course-checker/
+  rules:
+    - changes:
+        - spark-jobs/course-checker/**
+
+publish-spark-course-checker:
+  stage: publish
+  image: docker:24
+  services:
+    - docker:24-dind
+  variables:
+    SPARK_IMAGE: data-platform/spark-course-checker
+  script:
+    - docker login -u $HARBOR_USER -p $HARBOR_PASSWORD $HARBOR_REGISTRY
+    - docker push $HARBOR_REGISTRY/$SPARK_IMAGE:$IMAGE_TAG
+    - docker tag  $HARBOR_REGISTRY/$SPARK_IMAGE:$IMAGE_TAG
+                  $HARBOR_REGISTRY/$SPARK_IMAGE:latest
+    - docker push $HARBOR_REGISTRY/$SPARK_IMAGE:latest
+  rules:
+    - changes:
+        - spark-jobs/course-checker/**
+
+generate-and-commit-spark-workflow:
+  stage: update-infra
+  image: alpine:3.19
+  script:
+    - apk add --no-cache git yq
+    - git clone https://gitlab-ci-token:${INFRA_REPO_TOKEN}@gitlab.internal.example.com/data-platform-infra.git
+    - cd data-platform-infra
+    - export SPARK_IMAGE="$HARBOR_REGISTRY/data-platform/spark-course-checker:$IMAGE_TAG"
+    - ../ci/scripts/generate-spark-workflow.sh
+    - git config user.email "ci@gitlab.internal.example.com"
+    - git config user.name "GitLab CI"
+    - git add workflows/submitted/
+    - git commit -m "ci: submit spark-course-checker-${IMAGE_TAG} [skip ci]"
+    - git push
+  rules:
+    - changes:
+        - spark-jobs/course-checker/**
+
+# ── Internal service: dashboard-api ─────────────────────────────────────────
+
+build-publish-dashboard-api:
+  stage: publish
+  image: docker:24
+  services:
+    - docker:24-dind
+  variables:
+    SVC_IMAGE: data-platform/dashboard-api
+  script:
+    - docker login -u $HARBOR_USER -p $HARBOR_PASSWORD $HARBOR_REGISTRY
+    - docker build -t $HARBOR_REGISTRY/$SVC_IMAGE:$IMAGE_TAG services/dashboard-api/
+    - docker push $HARBOR_REGISTRY/$SVC_IMAGE:$IMAGE_TAG
+  rules:
+    - changes:
+        - services/dashboard-api/**
+
+update-dashboard-api-image-tag:
+  stage: update-infra
+  image: alpine:3.19
+  variables:
+    SVC_IMAGE: data-platform/dashboard-api
+  script:
+    - apk add --no-cache git yq
+    - git clone https://gitlab-ci-token:${INFRA_REPO_TOKEN}@gitlab.internal.example.com/data-platform-infra.git
+    - cd data-platform-infra
+    - yq e -i '
+        .images[] |= select(.name == "dashboard-api").newTag = env(IMAGE_TAG)
+      ' services/dashboard-api/overlays/prod/kustomization.yaml
+    - git add services/dashboard-api/overlays/prod/kustomization.yaml
+    - git commit -m "ci: update dashboard-api to ${IMAGE_TAG} [skip ci]"
+    - git push
+  rules:
+    - changes:
+        - services/dashboard-api/**
+
+# ── Internal service: dashboard-ui ──────────────────────────────────────────
+
+build-publish-dashboard-ui:
+  stage: publish
+  image: docker:24
+  services:
+    - docker:24-dind
+  variables:
+    SVC_IMAGE: data-platform/dashboard-ui
+  script:
+    - docker login -u $HARBOR_USER -p $HARBOR_PASSWORD $HARBOR_REGISTRY
+    - docker build -t $HARBOR_REGISTRY/$SVC_IMAGE:$IMAGE_TAG services/dashboard-ui/
+    - docker push $HARBOR_REGISTRY/$SVC_IMAGE:$IMAGE_TAG
+  rules:
+    - changes:
+        - services/dashboard-ui/**
+
+update-dashboard-ui-image-tag:
+  stage: update-infra
+  image: alpine:3.19
+  script:
+    - apk add --no-cache git yq
+    - git clone https://gitlab-ci-token:${INFRA_REPO_TOKEN}@gitlab.internal.example.com/data-platform-infra.git
+    - cd data-platform-infra
+    - yq e -i '
+        .images[] |= select(.name == "dashboard-ui").newTag = env(IMAGE_TAG)
+      ' services/dashboard-ui/overlays/prod/kustomization.yaml
+    - git add services/dashboard-ui/overlays/prod/kustomization.yaml
+    - git commit -m "ci: update dashboard-ui to ${IMAGE_TAG} [skip ci]"
+    - git push
+  rules:
+    - changes:
+        - services/dashboard-ui/**

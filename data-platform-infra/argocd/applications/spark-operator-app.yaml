@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: spark-operator
+  namespace: argocd
+spec:
+  project: default
+  sources:
+    - repoURL: https://gitlab.internal.example.com/data-platform-infra.git
+      targetRevision: HEAD
+      ref: values
+    - repoURL: https://kubeflow.github.io/spark-operator
+      chart: spark-operator
+      targetRevision: "1.4.0"
+      helm:
+        valueFiles:
+          - $values/helm-releases/spark-operator/values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: spark-operator
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

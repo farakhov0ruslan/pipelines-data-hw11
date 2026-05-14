@@ -1,0 +1,19 @@
+auth:
+  database: dashboard
+  username: dashboard_user
+  existingSecret: postgresql-secret   # пароль — в K8s Secret
+
+primary:
+  persistence:
+    enabled: true
+    size: 5Gi
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+metrics:
+  enabled: false
